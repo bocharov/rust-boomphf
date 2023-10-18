@@ -90,9 +90,20 @@ fn hashmod<T: Hash + ?Sized>(iter: u64, v: &T, n: u64) -> u64 {
 /// A minimal perfect hash function over a set of objects of type `T`.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "rkyv_ser", derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize))]
+#[cfg_attr(feature = "rkyv_ser", archive_attr(derive(rkyv::CheckBytes)))]
 pub struct Mphf<T> {
-    bitvecs: Box<[(BitVector, Box<[u64]>)]>,
+    bitvecs: Vec<BitVecTuple>,
     phantom: PhantomData<T>,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "rkyv_ser", derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize))]
+#[cfg_attr(feature = "rkyv_ser", archive_attr(derive(rkyv::CheckBytes)))]
+pub struct BitVecTuple {
+    bitvec: BitVector,
+    vec: Vec<u64>,
 }
 
 const MAX_ITERS: u64 = 100;
@@ -274,7 +285,7 @@ impl<T: Hash + Debug> Mphf<T> {
         }
     }
 
-    fn compute_ranks(bvs: Vec<BitVector>) -> Box<[(BitVector, Box<[u64]>)]> {
+    fn compute_ranks(bvs: Vec<BitVector>) -> Vec<BitVecTuple> {
         let mut ranks = Vec::new();
         let mut pop = 0_u64;
 
@@ -290,16 +301,20 @@ impl<T: Hash + Debug> Mphf<T> {
                 pop += v.count_ones() as u64;
             }
 
-            ranks.push((bv, rank.into_boxed_slice()))
+            ranks.push( BitVecTuple{
+                bitvec: bv,
+                vec: rank,
+            })
         }
 
-        ranks.into_boxed_slice()
+        ranks
     }
 
     #[inline]
     fn get_rank(&self, hash: u64, i: usize) -> u64 {
         let idx = hash as usize;
-        let (bv, ranks) = self.bitvecs.get(i).expect("that level doesn't exist");
+        let bitvec_tuple = self.bitvecs.get(i).expect("that level doesn't exist");
+        let (bv, ranks) = (&bitvec_tuple.bitvec, &bitvec_tuple.vec);
 
         // Last pre-computed rank
         let mut rank = ranks[idx / 512];
@@ -323,7 +338,7 @@ impl<T: Hash + Debug> Mphf<T> {
     /// in the construction set this function may panic.
     pub fn hash(&self, item: &T) -> u64 {
         for i in 0..self.bitvecs.len() {
-            let (bv, _) = &self.bitvecs[i];
+            let bv = &(self.bitvecs)[i].bitvec;
             let hash = hashmod(i as u64, item, bv.capacity() as u64);
 
             if bv.contains(hash) {
@@ -343,7 +358,7 @@ impl<T: Hash + Debug> Mphf<T> {
         Q: ?Sized + Hash,
     {
         for i in 0..self.bitvecs.len() {
-            let (bv, _) = &(self.bitvecs)[i];
+            let bv = &(self.bitvecs)[i].bitvec;
             let hash = hashmod(i as u64, item, bv.capacity() as u64);
 
             if bv.contains(hash) {
@@ -352,6 +367,50 @@ impl<T: Hash + Debug> Mphf<T> {
         }
 
         None
+    }
+}
+
+impl<T: Hash + Debug> ArchivedMphf<T> {
+    /// Compute the hash value of `item`. If `item` was not present
+    /// in the set of objects used to construct the hash function, the return
+    /// value will an arbitrary value Some(x), or None.
+    pub fn try_hash<Q>(&self, item: &Q) -> Option<u64>
+        where
+            T: Borrow<Q>,
+            Q: ?Sized + Hash,
+    {
+        for i in 0..self.bitvecs.len() {
+            let bv = &(self.bitvecs)[i].bitvec;
+            let hash = hashmod(i as u64, item, bv.vector.len() as u64);
+
+            if bv.vector.contains(&hash) {
+                return Some(self.get_rank(hash, i));
+            }
+        }
+
+        None
+    }
+
+    #[inline]
+    fn get_rank(&self, hash: u64, i: usize) -> u64 {
+        let idx = hash as usize;
+        let bitvec_tuple = self.bitvecs.get(i).expect("that level doesn't exist");
+        let (bv, ranks) = (&bitvec_tuple.bitvec, &bitvec_tuple.vec);
+
+        // Last pre-computed rank
+        let mut rank = ranks[idx / 512];
+
+        // Add rank of intervening words
+        for j in (idx / 64) & !7..idx / 64 {
+            rank += bv.get_word(j).count_ones() as u64;
+        }
+
+        // Add rank of final word up to hash
+        let final_word = bv.get_word(idx / 64);
+        if idx % 64 > 0 {
+            rank += (final_word << (64 - (idx % 64))).count_ones() as u64;
+        }
+        rank
     }
 }
 
@@ -655,7 +714,7 @@ impl<'a, T: 'a + Hash + Debug + Send + Sync> Mphf<T> {
 
             for i in 0..buffered_mphf.bitvecs.len() {
                 let buff_vec =
-                    std::mem::replace(&mut buffered_mphf.bitvecs[i].0, BitVector::new(0));
+                    std::mem::replace(&mut buffered_mphf.bitvecs[i].bitvec, BitVector::new(0));
                 bitvecs.push(buff_vec);
             }
         }
@@ -882,5 +941,14 @@ mod tests {
     fn from_ints_serial() {
         let items = (0..1000000).map(|x| x * 2);
         assert!(check_mphf(HashSet::from_iter(items)));
+    }
+
+    #[test]
+    fn rkyv_serialize() {
+        let possible_objects = vec![1, 10, 1000, 23, 457, 856, 845, 124, 912];
+        let phf = Mphf::new(1.7, &possible_objects);
+
+        let bytes = rkyv::to_bytes::<_, 1024>(&phf).unwrap();
+        assert!(bytes.len() > 0);
     }
 }

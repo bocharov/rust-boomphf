@@ -13,6 +13,7 @@ use std::iter::ExactSizeIterator;
 /// arrays, with ~3 bits/item overhead in the Mphf.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "rkyv_ser", derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize), archive_attr(derive(rkyv::CheckBytes)))]
 pub struct BoomHashMap<K: Hash, D> {
     mphf: Mphf<K>,
     pub(crate) keys: Vec<K>,
@@ -638,5 +639,29 @@ where
                 &mut self.aux_values[pos as usize],
             )
         })
+    }
+}
+
+
+impl<K, D> ArchivedBoomHashMap<K, D>
+    where
+        K: Hash + Debug + PartialEq + rkyv::Archive<Archived = K>,
+        D: Debug + rkyv::Archive<Archived = D>,
+{
+    /// Get the value associated with `key`. You must use a key that was supplied during the creation of the BoomHashMap. Querying for a new key will yield `Some` with a random value, or `None`. Querying with a valid key will always return `Some`.
+    pub fn get(&self, kmer: &K) -> Option<&D>
+    {
+        let maybe_pos = self.mphf.try_hash(kmer);
+        match maybe_pos {
+            Some(pos) => {
+                let hashed_kmer = &self.keys[pos as usize];
+                if kmer == hashed_kmer.borrow() {
+                    Some(&self.values[pos as usize])
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
     }
 }

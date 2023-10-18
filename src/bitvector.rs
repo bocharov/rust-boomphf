@@ -40,17 +40,18 @@ type Word = u64;
 /// Bitvector
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "rkyv_ser", derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize), archive_attr(derive(rkyv::CheckBytes)))]
 pub struct BitVector {
-    bits: u64,
+    pub bits: u64,
     #[cfg(feature = "parallel")]
     #[cfg_attr(
         feature = "serde",
         serde(serialize_with = "ser_atomic_vec", deserialize_with = "de_atomic_vec")
     )]
-    vector: Box<[AtomicU64]>,
+    pub vector: Vec<AtomicU64>,
 
     #[cfg(not(feature = "parallel"))]
-    vector: Box<[u64]>,
+    pub vector: Vec<u64>,
 }
 
 // Custom serializer
@@ -145,7 +146,7 @@ impl BitVector {
 
         BitVector {
             bits,
-            vector: v.into_boxed_slice(),
+            vector: v,
         }
     }
 
@@ -165,7 +166,7 @@ impl BitVector {
         bvec.push(last_val.into());
         BitVector {
             bits,
-            vector: bvec.into_boxed_slice(),
+            vector: bvec,
         }
     }
 
@@ -381,6 +382,17 @@ impl BitVector {
             idx: 0,
             size: self.bits,
         }
+    }
+}
+
+impl ArchivedBitVector {
+    #[inline]
+    pub fn get_word(&self, word: usize) -> u64 {
+        #[cfg(feature = "parallel")]
+        return self.vector[word];
+
+        #[cfg(not(feature = "parallel"))]
+        return self.vector[word] as u64;
     }
 }
 
