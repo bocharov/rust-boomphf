@@ -643,19 +643,20 @@ where
 }
 
 
-impl<K, D> ArchivedBoomHashMap<K, D>
-    where
-        K: Hash + Debug + PartialEq + rkyv::Archive<Archived = K>,
-        D: Debug + rkyv::Archive<Archived = D>,
+impl<K: Hash + rkyv::Archive, V: rkyv::Archive> ArchivedBoomHashMap<K, V>
 {
     /// Get the value associated with `key`. You must use a key that was supplied during the creation of the BoomHashMap. Querying for a new key will yield `Some` with a random value, or `None`. Querying with a valid key will always return `Some`.
-    pub fn get(&self, kmer: &K) -> Option<&D>
+    #[inline]
+    pub fn get<Q: ?Sized + std::cmp::PartialEq<<K as rkyv::Archive>::Archived>>(&self, k: &Q) -> Option<&rkyv::Archived<V>>
+        where
+            K: Hash + rkyv::Archive + Borrow<Q>,
+            Q: Hash + Eq,
     {
-        let maybe_pos = self.mphf.try_hash(kmer);
+        let maybe_pos = self.mphf.try_hash(k);
         match maybe_pos {
             Some(pos) => {
                 let hashed_kmer = &self.keys[pos as usize];
-                if kmer == hashed_kmer.borrow() {
+                if k == hashed_kmer.borrow() {
                     Some(&self.values[pos as usize])
                 } else {
                     None

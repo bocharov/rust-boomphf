@@ -370,14 +370,14 @@ impl<T: Hash + Debug> Mphf<T> {
     }
 }
 
-impl<T: Hash + Debug> ArchivedMphf<T> {
+impl<T> ArchivedMphf<T> {
     /// Compute the hash value of `item`. If `item` was not present
     /// in the set of objects used to construct the hash function, the return
     /// value will an arbitrary value Some(x), or None.
     pub fn try_hash<Q>(&self, item: &Q) -> Option<u64>
         where
             T: Borrow<Q>,
-            Q: ?Sized + Hash,
+            Q: Hash + ?Sized,
     {
         for i in 0..self.bitvecs.len() {
             let bv = &(self.bitvecs)[i].bitvec;
