@@ -394,6 +394,11 @@ impl ArchivedBitVector {
         #[cfg(not(feature = "parallel"))]
         return self.vector[word] as u64;
     }
+
+    #[inline]
+    pub fn capacity(&self) -> u64 {
+        self.bits
+    }
 }
 
 /// Iterator for BitVector
