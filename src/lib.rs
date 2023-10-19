@@ -383,7 +383,7 @@ impl<T> ArchivedMphf<T> {
             let bv = &(self.bitvecs)[i].bitvec;
             let hash = hashmod(i as u64, item, bv.capacity() as u64);
 
-            if bv.vector.contains(&hash) {
+            if bv.contains(hash) {
                 return Some(self.get_rank(hash, i));
             }
         }

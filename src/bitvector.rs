@@ -399,6 +399,12 @@ impl ArchivedBitVector {
     pub fn capacity(&self) -> u64 {
         self.bits
     }
+
+    #[inline]
+    pub fn contains(&self, bit: u64) -> bool {
+        let (word, mask) = word_mask(bit);
+        (self.get_word(word) & mask) != 0
+    }
 }
 
 /// Iterator for BitVector
